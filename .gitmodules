@@ -1,0 +1,12 @@
+[submodule "vendor/stalwart"]
+	path = vendor/stalwart
+	url = https://github.com/AzzurroTech/mail-server.git
+[submodule "vendor/nextcloud"]
+	path = vendor/nextcloud
+	url = https://github.com/AzzurroTech/nextcloud-all-in-one.git
+[submodule "vendor/gitlab"]
+	path = vendor/gitlab
+	url = https://github.com/AzzurroTech/omnibus-gitlab.git
+[submodule "vendor/openproject"]
+	path = vendor/openproject
+	url = https://github.com/AzzurroTech/openproject-deploy.git
