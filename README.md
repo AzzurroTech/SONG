@@ -17,4 +17,7 @@ Backup: TRUE
 8) Run "docker compose up -d"
 9) Follow Odoo setup instructions
 
-
+NOTE: SHOULD HTTPS NOT WORK
+Run the following commands replacing w,x,y,z with your instance IP
+docker exec pod-caddy-1 caddy reverse-proxy --from example.com --to 0.0.0.0:8069
+docker exec pod-caddy-1 caddy reverse-proxy --from example.com --to w.x.y.z:8069
