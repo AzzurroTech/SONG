@@ -1,0 +1,49 @@
+version: "3"
+
+services:
+  web:
+    image: odoo:latest
+    restart: always
+    depends_on:
+      - db
+    ports:
+      - "8069:8069"
+    volumes:
+      - data:/POD/config/odoo
+  db:
+    image: postgres:latest
+    restart: always
+    volumes:
+      - db:/POD/config/postgresql/data/pgdata
+    environment:
+      - POSTGRES_DB=postgres
+      - POSTGRES_PASSWORD=odoo
+      - POSTGRES_USER=odoo
+  caddy:
+    image: caddy:latest
+    restart: always
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - $PWD/Caddyfile:/POD/etc/caddy/Caddyfile
+      - $PWD/site:/POD/srv
+      - caddy_data:/POD/data
+      - caddy_config:/POD/config
+
+volumes:
+  caddy_data:
+  caddy_config:
+  data:
+  db:
+
+networks:
+  pod_network:
+    driver: bridge
+
+
+
+

@@ -1,0 +1,19 @@
+example.localhost { #only if you like to redirect to www.example.com
+    redir https://www.example.localhost{uri} 
+}
+www.example.com {
+    reverse_proxy http://0.0.0.0:8069 { 
+        header_up X-Forwarded-Proto https
+        header_up X-Forwarded-Host {host}
+        header_up X-Url-Scheme {scheme}
+        header_up X-Real-IP {remote}
+    }
+
+    reverse_proxy /longpolling/* http://0.0.0.0:8072 { # in case you use it 
+    }
+
+
+    encode gzip zstd
+    file_server
+    log
+}
