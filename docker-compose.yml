@@ -9,12 +9,12 @@ services:
     ports:
       - "8069:8069"
     volumes:
-      - data:/POD/config/odoo
+      - data:/config/odoo
   db:
     image: postgres:latest
     restart: always
     volumes:
-      - db:/POD/config/postgresql/data/pgdata
+      - db:/config/postgresql/data/pgdata
     environment:
       - POSTGRES_DB=postgres
       - POSTGRES_PASSWORD=odoo
@@ -29,10 +29,10 @@ services:
       - "443:443"
       - "443:443/udp"
     volumes:
-      - $PWD/Caddyfile:/POD/etc/caddy/Caddyfile
-      - $PWD/site:/POD/srv
-      - caddy_data:/POD/data
-      - caddy_config:/POD/config
+      - $PWD/Caddyfile:/etc/caddy/Caddyfile
+      - $PWD/site:/srv
+      - caddy_data:/data
+      - caddy_config:/config
 
 volumes:
   caddy_data:
