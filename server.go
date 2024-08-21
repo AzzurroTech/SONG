@@ -23,11 +23,7 @@ func main() {
 	db.SetMaxIdleConns(10)
 	fmt.Println("DB has been setup")
 	//root server handling
-	http.Handle("/", veni.Load(http.Dir("./root")))
-	//Other server handling
-	http.Handle("/data/", http.StripPrefix("/data/", http.FileServer(http.Dir("./data"))))
-	//Access Vici platform
-	http.Handle("/demo/", http.StripPrefix("/demo/", http.FileServer(http.Dir("./vici"))))
+	http.Handle("/", veni.Load(http.Dir("./")))
 	//Access Vidi database
 	http.Handle("/base/", vidi.Load(db))
 	fmt.Println("Listen on port 3000")
