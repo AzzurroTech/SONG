@@ -1,5 +1,5 @@
 # POD
-PROTON-ODOO-DOCKER Stack
+PROTON-OTHER-DOCKER Stack
 
 ##Droplet Data
 RAM: 2GB+
