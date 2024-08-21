@@ -1,0 +1,8 @@
+filippo.io/edwards25519 v1.1.0 h1:FNf4tywRC1HmFuKW5xopWpigGjJKiJSV0Cqo0cJWDaA=
+filippo.io/edwards25519 v1.1.0/go.mod h1:BxyFTGdWcka3PhytdK4V28tE5sGfRvvvRV7EaN4VDT4=
+github.com/Emperor42/veni v0.0.0-20240722144806-bac05e020f34 h1:3splNiCgrc1cZgVJdn2IiyhKjyEzt7JN0cqmmV3rS7o=
+github.com/Emperor42/veni v0.0.0-20240722144806-bac05e020f34/go.mod h1:sxQB0ztmdbJW+RM0UcyboZyVAnT7l7whIpz80f/+x8c=
+github.com/Emperor42/vidi v0.0.0-20240816191256-5d84ab716fc9 h1:wrGE4XBa4/tfd/2J0vryo6fLD3d22I5FqVXgNykOgOc=
+github.com/Emperor42/vidi v0.0.0-20240816191256-5d84ab716fc9/go.mod h1:6MlWhn1WdKczztI16kyBZ8QtLIv9tvTPeKoze4N+j2Y=
+github.com/go-sql-driver/mysql v1.8.1 h1:LedoTUt/eveggdHS9qUFC1EFSa8bU2+1pZjSRpvNJ1Y=
+github.com/go-sql-driver/mysql v1.8.1/go.mod h1:wEBSXgmK//2ZFJyE+qWnIsVGmvmEKlqwuVSjsCm7DZg=
