@@ -5,8 +5,8 @@ import (
 	"log"
 	"net/http"
 
-	veni "../veni"
-	vidi "../vidi"
+	"github.com/Emperor42/veni"
+	"github.com/Emperor42/vidi"
 )
 
 func main() {
