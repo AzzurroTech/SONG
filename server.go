@@ -10,8 +10,8 @@ import (
 )
 
 func main() {
-	http.HandleFunc("/call", veni.Handler)
-	http.HandleFunc("/data", vidi.Handler)
+	http.Handle("/call", &veni.VeniContext{"veni"})
+	http.Handle("/data", &vidi.VidiContext{"veni"})
 
 	fmt.Printf("Starting server at port 3000\n")
 	if err := http.ListenAndServe(":3000", nil); err != nil {
