@@ -8,18 +8,18 @@ import (
 	"path/filepath"
 	"strings"
 
-	"SONG/vidi"
+	"vidi"
 
-	"SONG/veni"
+	"veni"
 
-	"SONG/connect_api"
-	"SONG/delete_api"
-	"SONG/get_api"
-	"SONG/head_api"
-	"SONG/options_api"
-	"SONG/patch_api"
-	"SONG/put_api"
-	"SONG/trace_api"
+	"connect_api"
+	"delete_api"
+	"get_api"
+	"head_api"
+	"options_api"
+	"patch_api"
+	"put_api"
+	"trace_api"
 )
 
 type Server struct {
