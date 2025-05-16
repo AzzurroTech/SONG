@@ -1,4 +1,4 @@
-package song
+package SONG
 
 import (
 	"fmt"
@@ -8,18 +8,18 @@ import (
 	"path/filepath"
 	"strings"
 
-	"./vidi"
+	"SONG/vidi"
 
-	"./veni"
+	"SONG/veni"
 
-	"./connect_api"
-	"./delete_api"
-	"./get_api"
-	"./head_api"
-	"./options_api"
-	"./patch_api"
-	"./put_api"
-	"./trace_api"
+	"SONG/connect_api"
+	"SONG/delete_api"
+	"SONG/get_api"
+	"SONG/head_api"
+	"SONG/options_api"
+	"SONG/patch_api"
+	"SONG/put_api"
+	"SONG/trace_api"
 )
 
 type Server struct {
@@ -31,10 +31,11 @@ type Server struct {
 	fileServer http.Handler
 }
 
-func InitServer(dir string) *Server {
+func InitServer(dir, ps string) *Server {
 	var s Server
 	s.router = http.NewServeMux()
 	s.targetDir = dir
+	s.portStr = ps
 	var veniInstance veni.VeniContext
 	veniInstance.ConnectAPI = connect_api.InitAPI()
 	veniInstance.DeleteAPI = delete_api.InitAPI()
@@ -113,6 +114,7 @@ func (s *Server) Serve() {
 
 	// Handle all requests with the custom handler, by adding in at this point
 	s.Route("/", handler)
+	s.Route("GET /song", func(w http.ResponseWriter, r *http.Request) { http.ServeFile(w, r, "./README.md") })
 
 	// Start the server
 	log.Println("Server listening on port " + s.portStr)
