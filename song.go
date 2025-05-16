@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"post_api"
 	"strings"
 
 	"vidi"
@@ -45,6 +46,7 @@ func InitServer(dir, ps string) *Server {
 	veniInstance.PatchAPI = patch_api.InitAPI()
 	veniInstance.PutAPI = put_api.InitAPI()
 	veniInstance.TraceAPI = trace_api.InitAPI()
+	veniInstance.PostAPI = post_api.InitAPI()
 	s.ve = &veniInstance
 	var vidiInstance vidi.VidiContext
 	s.vd = &vidiInstance
@@ -114,8 +116,10 @@ func (s *Server) Serve() {
 
 	// Handle all requests with the custom handler, by adding in at this point
 	s.Route("/", handler)
-	s.Route("GET /song", func(w http.ResponseWriter, r *http.Request) { http.ServeFile(w, r, "./README.md") })
-
+	s.Route("GET /song/", func(w http.ResponseWriter, r *http.Request) { http.ServeFile(w, r, "SONG/README.md") })
+	s.Route("GET /veni/", func(w http.ResponseWriter, r *http.Request) { http.ServeFile(w, r, "SONG/veni/README.md") })
+	s.Route("GET /vidi/", func(w http.ResponseWriter, r *http.Request) { http.ServeFile(w, r, "SONG/vidi/README.md") })
+	s.Route("GET /vici/", func(w http.ResponseWriter, r *http.Request) { http.ServeFile(w, r, "SONG/vici/README.md") })
 	// Start the server
 	log.Println("Server listening on port " + s.portStr)
 	log.Fatal(http.ListenAndServe(s.portStr, s.router))
