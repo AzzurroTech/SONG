@@ -32,7 +32,7 @@ type Server struct {
 	fileServer http.Handler
 }
 
-func InitServer(dir, ps string) *Server {
+func InitServer(dir, ps, veniName, vidiName, viciName string, dm vidi.VidiInterface) *Server {
 	var s Server
 	s.router = http.NewServeMux()
 	s.targetDir = dir
@@ -47,10 +47,11 @@ func InitServer(dir, ps string) *Server {
 	veniInstance.PutAPI = put_api.InitAPI()
 	veniInstance.TraceAPI = trace_api.InitAPI()
 	veniInstance.PostAPI = post_api.InitAPI()
+	veniInstance.Name = veniName
 	s.ve = &veniInstance
-	var vidiInstance vidi.VidiContext
-	s.vd = &vidiInstance
-	return &s
+	s.vd = vidi.InitContext(vidiName, dm)
+	ret := &s
+	return ret
 }
 
 func (s *Server) Route(pattern string, handler func(http.ResponseWriter, *http.Request)) {
@@ -88,6 +89,27 @@ func (s *Server) Route(pattern string, handler func(http.ResponseWriter, *http.R
 	}
 }
 
+func (s *Server) serveDirectory(route, tarString string) {
+	// Define the directory to serve files from, as the parent directory (to include this component as a server)
+	fs := http.Dir(tarString)
+	// Create a custom file server handler
+	s.fileServer = http.FileServer(fs)
+	// Create a handler function to handle requests
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		// Attempt to open the file to serve
+		_, err := fs.Open(filepath.Clean(r.URL.Path))
+		if os.IsNotExist(err) {
+			// If the file does not exist, throw 404
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		// If the file exists, serve it using the default file server
+		s.fileServer.ServeHTTP(w, r)
+	}
+	// Handle all requests with the custom handler, by adding in at this point
+	s.Route(route, handler)
+}
+
 func (s *Server) Serve() {
 
 	// Define the directory to serve files from, as the parent directory (to include this component as a server)
@@ -117,9 +139,10 @@ func (s *Server) Serve() {
 	// Handle all requests with the custom handler, by adding in at this point
 	s.Route("/", handler)
 	s.Route("GET /song/", func(w http.ResponseWriter, r *http.Request) { http.ServeFile(w, r, "SONG/README.md") })
+	s.Route("GET /song/veni/", func(w http.ResponseWriter, r *http.Request) { http.ServeFile(w, r, "SONG/veni/README.md") })
 	s.Route("GET /veni/", func(w http.ResponseWriter, r *http.Request) { http.ServeFile(w, r, "SONG/veni/README.md") })
-	s.Route("GET /vidi/", func(w http.ResponseWriter, r *http.Request) { http.ServeFile(w, r, "SONG/vidi/README.md") })
-	s.Route("GET /vici/", func(w http.ResponseWriter, r *http.Request) { http.ServeFile(w, r, "SONG/vici/README.md") })
+	s.Route("GET /song/vidi/", func(w http.ResponseWriter, r *http.Request) { http.ServeFile(w, r, "SONG/vidi/README.md") })
+	s.Route("GET /song/vici/", func(w http.ResponseWriter, r *http.Request) { http.ServeFile(w, r, "SONG/vici/README.md") })
 	// Start the server
 	log.Println("Server listening on port " + s.portStr)
 	log.Fatal(http.ListenAndServe(s.portStr, s.router))
