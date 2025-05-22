@@ -140,7 +140,6 @@ func (s *Server) Serve() {
 	s.Route("/", handler)
 	s.Route("GET /song/", func(w http.ResponseWriter, r *http.Request) { http.ServeFile(w, r, "SONG/README.md") })
 	s.Route("GET /song/veni/", func(w http.ResponseWriter, r *http.Request) { http.ServeFile(w, r, "SONG/veni/README.md") })
-	s.Route("GET /veni/", func(w http.ResponseWriter, r *http.Request) { http.ServeFile(w, r, "SONG/veni/README.md") })
 	s.Route("GET /song/vidi/", func(w http.ResponseWriter, r *http.Request) { http.ServeFile(w, r, "SONG/vidi/README.md") })
 	s.Route("GET /song/vici/", func(w http.ResponseWriter, r *http.Request) { http.ServeFile(w, r, "SONG/vici/README.md") })
 	// Start the server
