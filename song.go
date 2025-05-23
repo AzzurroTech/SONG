@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"post_api"
@@ -29,6 +30,7 @@ type Server struct {
 	portStr    string
 	ve         *veni.VeniContext
 	vd         *vidi.VidiContext
+	vi         string
 	fileServer http.Handler
 }
 
@@ -50,6 +52,7 @@ func InitServer(dir, ps, veniName, vidiName, viciName string, dm vidi.VidiInterf
 	veniInstance.Name = veniName
 	s.ve = &veniInstance
 	s.vd = vidi.InitContext(vidiName, dm)
+	s.vi = viciName
 	ret := &s
 	return ret
 }
@@ -110,6 +113,25 @@ func (s *Server) serveDirectory(route, tarString string) {
 	s.Route(route, handler)
 }
 
+func getFirstPathComponent(urlPath string) (string, error) {
+	parsedURL, err := url.Parse(urlPath)
+	if err != nil {
+		return "", err
+	}
+
+	path := parsedURL.Path
+	pathComponents := strings.Split(path, "/")
+
+	// Handle cases with leading/trailing slashes or empty paths
+	for _, component := range pathComponents {
+		if component != "" {
+			return component, nil
+		}
+	}
+
+	return "", nil // Return empty string if no component is found
+}
+
 func (s *Server) Serve() {
 
 	// Define the directory to serve files from, as the parent directory (to include this component as a server)
@@ -120,19 +142,49 @@ func (s *Server) Serve() {
 
 	// Create a handler function to handle requests
 	handler := func(w http.ResponseWriter, r *http.Request) {
-		if s.ve.Comply(r) {
-			//Veni compliant, attempting to load as VENI
-			s.ve.Process(w, r)
-		} else {
+		base, err := getFirstPathComponent(r.URL.Path)
+		if err != nil {
+			base = ""
+		}
+		fmt.Println(base)
+		switch strings.ToLower(base) {
+		case s.vi:
+			fmt.Println("VICI CALLED")
+			// Define the directory to serve files from, as the parent directory (to include this component as a server)
+			tfs := http.Dir("./SONG")
+			fmt.Println("tfs is ")
+			fmt.Println(tfs)
+			fmt.Println(filepath.Clean(r.URL.Path))
+			// Create a custom file server handler
+			tmpFileServer := http.FileServer(tfs)
 			// Attempt to open the file to serve
-			_, err := fs.Open(filepath.Clean(r.URL.Path))
+			_, err := tfs.Open(filepath.Clean(r.URL.Path))
 			if os.IsNotExist(err) {
 				// If the file does not exist, throw 404
 				w.WriteHeader(http.StatusNotFound)
 				return
 			}
 			// If the file exists, serve it using the default file server
-			s.fileServer.ServeHTTP(w, r)
+			tmpFileServer.ServeHTTP(w, r)
+		default:
+			if s.vd.Comply(r) {
+				s.vd.ProcessRequest(w, r)
+			} else {
+				if s.ve.Comply(r) {
+					//Veni compliant, attempting to load as VENI
+					s.ve.Process(w, r)
+				} else {
+					// Attempt to open the file to serve
+					_, err := fs.Open(filepath.Clean(r.URL.Path))
+					if os.IsNotExist(err) {
+						// If the file does not exist, throw 404
+						w.WriteHeader(http.StatusNotFound)
+						return
+					}
+					// If the file exists, serve it using the default file server
+					s.fileServer.ServeHTTP(w, r)
+				}
+			}
 		}
 	}
 
