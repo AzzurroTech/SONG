@@ -1,0 +1,42 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>SONG – Login</title>
+  <style>
+    body {font-family:Arial,sans-serif; max-width:400px; margin:2rem auto;}
+    label, input {display:block; width:100%; margin-bottom:.5rem;}
+    button {padding:.5rem 1rem;}
+  </style>
+</head>
+<body>
+  <h1>Welcome to SONG</h1>
+  <form id="loginForm">
+    <label>Username <input type="text" id="user" required></label>
+    <label>Password <input type="password" id="pass" required></label>
+    <button type="submit">Enter Dashboard</button>
+  </form>
+
+  <script>
+    const form = document.getElementById('loginForm');
+    form.addEventListener('submit', e => {
+      e.preventDefault();
+      const u = document.getElementById('user').value;
+      const p = document.getElementById('pass').value;
+      const cred = btoa(`${u}:${p}`);
+      // Test credentials against a cheap endpoint
+      fetch('/api/components', {
+        method: 'GET',
+        headers: { 'Authorization': `Basic ${cred}` }
+      }).then(r => {
+        if (r.status===200) {
+          sessionStorage.setItem('auth', cred);
+          location.href = '/ui/dashboard.html';
+        } else {
+          alert('Invalid credentials');
+        }
+      });
+    });
+  </script>
+</body>
+</html>

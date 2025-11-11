@@ -1,9 +1,0 @@
-[submodule "vidi"]
-	path = vidi
-	url = https://github.com/Emperor42/vidi.git
-[submodule "veni"]
-	path = veni
-	url = https://github.com/Emperor42/veni.git
-[submodule "vici"]
-	path = vici
-	url = https://github.com/Emperor42/vici.git

@@ -1,0 +1,89 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>SONG – Component Editor</title>
+  <style>
+    body {font-family:Arial,sans-serif; margin:1rem;}
+    textarea {width:100%; height:150px; font-family:monospace;}
+    label {display:block;margin-top:.5rem;}
+    button {margin-top:.5rem;padding:.5rem 1rem;}
+    .msg {margin-top:.5rem;color:#006400;}
+  </style>
+</head>
+<body>
+  <h1>Component Editor</h1>
+
+  <label>Component ID (leave empty to create new):
+    <input type="text" id="cid" placeholder="e.g. abcd1234">
+  </label>
+
+  <label>HTML markup (inner content of the custom element):
+    <textarea id="html"></textarea>
+  </label>
+
+  <label>Optional JavaScript (runs inside the element’s class):
+    <textarea id="js"></textarea>
+  </label>
+
+  <button id="saveBtn">Save Component</button>
+  <div class="msg" id="msg"></div>
+
+  <script>
+    const auth = sessionStorage.getItem('auth');
+    if (!auth) location.href = '/';
+
+    const cidInput = document.getElementById('cid');
+    const htmlTA   = document.getElementById('html');
+    const jsTA     = document.getElementById('js');
+    const msgDiv   = document.getElementById('msg');
+
+    // Load an existing component when an ID is entered
+    cidInput.addEventListener('blur', async () => {
+      const id = cidInput.value.trim();
+      if (!id) return;
+      const resp = await fetch('/api/components', {
+        method: 'GET',
+        headers: { 'Authorization': `Basic ${auth}` }
+      });
+      const list = await resp.json();
+      const comp = list.find(c => c.id === id);
+      if (comp) {
+        htmlTA.value = comp.html;
+        jsTA.value   = comp.js || '';
+        msgDiv.textContent = `Loaded component ${id}`;
+      } else {
+        msgDiv.textContent = `Component ${id} not found – will create new`;
+      }
+    });
+
+    // Save (create or update)
+    document.getElementById('saveBtn').addEventListener('click', async () => {
+      const id   = cidInput.value.trim();
+      const html = htmlTA.value;
+      const js   = jsTA.value;
+
+      if (!html) {
+        msgDiv.textContent = 'HTML cannot be empty';
+        return;
+      }
+
+      // The API only supports POST for creation; for simplicity we always POST.
+      // If you need true “update”, you could delete the old entry first.
+      const payload = { html, js };
+      const resp = await fetch('/api/components', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Basic ${auth}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
+
+      const result = await resp.json();
+      cidInput.value = result.id;
+      msgDiv.textContent = `Component saved with ID ${result.id}`;
+    });
+  </script>
+</body>
+</html>

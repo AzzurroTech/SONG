@@ -1,0 +1,56 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>SONG – JavaScript Snippet Viewer</title>
+  <style>
+    body {font-family:Arial,sans-serif; margin:1rem;}
+    textarea {width:100%; height:300px; font-family:monospace;}
+    button {margin-top:.5rem;padding:.5rem 1rem;}
+    .msg {margin-top:.5rem;color:#006400;}
+  </style>
+</head>
+<body>
+  <h1>JavaScript Snippet Viewer</h1>
+
+  <label>Snippet key:
+    <input type="text" id="key" placeholder="e.g. myUtil">
+  </label>
+
+  <button id="loadBtn">Load Snippet</button>
+
+  <textarea id="code" readonly placeholder="Snippet will appear here…"></textarea>
+
+  <div class="msg" id="msg"></div>
+
+  <script>
+    const auth = sessionStorage.getItem('auth');
+    if (!auth) location.href = '/';
+
+    const loadBtn = document.getElementById('loadBtn');
+    const keyInp  = document.getElementById('key');
+    const codeTA  = document.getElementById('code');
+    const msgDiv  = document.getElementById('msg');
+
+    loadBtn.onclick = async () => {
+      const key = keyInp.value.trim();
+      if (!key) {
+        msgDiv.textContent = 'Enter a key';
+        return;
+      }
+      const resp = await fetch(`/api/js/${encodeURIComponent(key)}`, {
+        method: 'GET',
+        headers: { 'Authorization': `Basic ${auth}` }
+      });
+      if (!resp.ok) {
+        msgDiv.textContent = `Snippet not found (${resp.status})`;
+        codeTA.value = '';
+        return;
+      }
+      const data = await resp.json();
+      codeTA.value = data.code;
+      msgDiv.textContent = `Loaded snippet "${key}"`;
+    };
+  </script>
+</body>
+</html>
