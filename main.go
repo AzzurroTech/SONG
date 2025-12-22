@@ -1,285 +1,457 @@
 package main
 
 import (
-	"encoding/base64"
+	"bytes"
 	"encoding/json"
 	"fmt"
-	"log"
+	"html/template"
+	"io"
 	"net/http"
-	"path"
+	"os/exec"
+	"sort"
 	"strings"
-	"sync"
 )
 
-// ---------- In‑memory data structures ----------
-type Component struct {
-	ID   string `json:"id"`   // generated UUID‑like string
-	HTML string `json:"html"` // inner HTML of the custom element
-	JS   string `json:"js"`   // optional script for the element
+// ---------- Data structures ----------
+type Container struct {
+	ID      string
+	Image   string
+	Command string
+	Created string
+	Status  string
+	Ports   string
+	Names   string
 }
 
-type Page struct {
-	Slug        string   `json:"slug"`        // URL part, e.g. "home"
-	Title       string   `json:"title"`       // shown in <title>
-	Components  []string `json:"components"`  // slice of Component.ID
-	Description string   `json:"description"` // optional meta description
+// Minimal subset of `docker inspect` output we need.
+type inspectInfo struct {
+	Config struct {
+		Image string   `json:"Image"`
+		Env   []string `json:"Env"`
+	} `json:"Config"`
+	NetworkSettings struct {
+		Ports map[string][]struct {
+			HostIP   string `json:"HostIp"`
+			HostPort string `json:"HostPort"`
+		} `json:"Ports"`
+	} `json:"NetworkSettings"`
 }
 
-// Simple thread‑safe stores
-var (
-	compStore = struct {
-		sync.RWMutex
-		m map[string]Component
-	}{m: make(map[string]Component)}
+// Docker‑Hub tag list response (only a few fields we need).
+type TagResult struct {
+	Count   int `json:"count"`
+	Results []struct {
+		Name string `json:"name"`
+	} `json:"results"`
+}
 
-	pageStore = struct {
-		sync.RWMutex
-		m map[string]Page
-	}{m: make(map[string]Page)}
+// ---------- Helper functions ----------
+func runDockerPS() ([]Container, error) {
+	cmd := exec.Command(
+		"docker", "ps",
+		"--no-trunc",
+		`--format`,
+		`{{.ID}}\t{{.Image}}\t{{.Command}}\t{{.CreatedAt}}\t{{.Status}}\t{{.Ports}}\t{{.Names}}`,
+	)
 
-	jsStore = struct {
-		sync.RWMutex
-		m map[string]string // key → raw JS source
-	}{m: make(map[string]string)}
-)
-
-// ---------- Basic auth ----------
-const (
-	authUser = "admin"
-	authPass = "changeme" // <-- replace with a strong password
-)
-
-func basicAuth(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		user, pass, ok := r.BasicAuth()
-		if !ok || user != authUser || pass != authPass {
-			w.Header().Set("WWW-Authenticate", `Basic realm="SONG"`)
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			return
-		}
-		next.ServeHTTP(w, r)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("failed to run docker ps: %w", err)
 	}
+
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	containers := make([]Container, 0, len(lines))
+	for _, line := range lines {
+		f := strings.SplitN(line, "\t", 7)
+		if len(f) < 7 {
+			continue // ignore malformed lines
+		}
+		containers = append(containers, Container{
+			ID:      f[0],
+			Image:   f[1],
+			Command: f[2],
+			Created: f[3],
+			Status:  f[4],
+			Ports:   f[5],
+			Names:   f[6],
+		})
+	}
+	return containers, nil
 }
 
-// ---------- Helper utilities ----------
-func jsonResponse(w http.ResponseWriter, v interface{}) {
+// Pull up to 10 tags from Docker Hub for a given image name.
+func fetchTags(image string) ([]string, error) {
+	url := fmt.Sprintf("https://hub.docker.com/v2/repositories/library/%s/tags?page_size=10", image)
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Docker Hub returned %d", resp.StatusCode)
+	}
+	var tr TagResult
+	if err := json.NewDecoder(resp.Body).Decode(&tr); err != nil {
+		return nil, err
+	}
+	tags := make([]string, 0, tr.Count)
+	for _, r := range tr.Results {
+		tags = append(tags, r.Name)
+	}
+	return tags, nil
+}
+
+// Build a minimal docker‑compose.yml from the currently running containers.
+func buildComposeYAML() (string, error) {
+	// 1️⃣ Get IDs of all running containers.
+	cmdIDs := exec.Command("docker", "ps", "-q")
+	var idsOut bytes.Buffer
+	cmdIDs.Stdout = &idsOut
+	if err := cmdIDs.Run(); err != nil {
+		return "", fmt.Errorf("cannot list containers: %w", err)
+	}
+	ids := strings.Fields(idsOut.String())
+	if len(ids) == 0 {
+		return "# No containers are running – nothing to export.\n", nil
+	}
+
+	services := make([]string, 0, len(ids))
+
+	for _, id := range ids {
+		inspectCmd := exec.Command("docker", "inspect", id)
+		var inspectOut bytes.Buffer
+		inspectCmd.Stdout = &inspectOut
+		if err := inspectCmd.Run(); err != nil {
+			return "", fmt.Errorf("inspect failed for %s: %w", id, err)
+		}
+		var infoArr []inspectInfo
+		if err := json.Unmarshal(inspectOut.Bytes(), &infoArr); err != nil {
+			return "", fmt.Errorf("json decode failed for %s: %w", id, err)
+		}
+		if len(infoArr) == 0 {
+			continue
+		}
+		info := infoArr[0]
+
+		// Service name – deterministic identifier.
+		serviceName := fmt.Sprintf("svc_%s", id[:12])
+
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("  %s:\n", serviceName))
+		sb.WriteString(fmt.Sprintf("    image: %s\n", info.Config.Image))
+
+		// Ports ---------------------------------------------------------
+		if len(info.NetworkSettings.Ports) > 0 {
+			portLines := []string{}
+			for containerPortProto, bindings := range info.NetworkSettings.Ports {
+				parts := strings.Split(containerPortProto, "/")
+				containerPort := parts[0]
+				if len(bindings) == 0 {
+					// No host binding – expose the same port.
+					portLines = append(portLines, fmt.Sprintf("%s:%s", containerPort, containerPort))
+				} else {
+					for _, b := range bindings {
+						hostPort := b.HostPort
+						portLines = append(portLines, fmt.Sprintf("%s:%s", hostPort, containerPort))
+					}
+				}
+			}
+			if len(portLines) > 0 {
+				sort.Strings(portLines)
+				sb.WriteString("    ports:\n")
+				for _, pl := range portLines {
+					sb.WriteString(fmt.Sprintf("      - \"%s\"\n", pl))
+				}
+			}
+		}
+
+		// Environment variables -------------------------------------------
+		if len(info.Config.Env) > 0 {
+			sb.WriteString("    environment:\n")
+			for _, ev := range info.Config.Env {
+				sb.WriteString(fmt.Sprintf("      - %s\n", ev))
+			}
+		}
+		services = append(services, sb.String())
+	}
+
+	var final strings.Builder
+	final.WriteString("version: \"3\"\n")
+	final.WriteString("services:\n")
+	for _, s := range services {
+		final.WriteString(s)
+	}
+	return final.String(), nil
+}
+
+// ---------- HTTP Handlers ----------
+func indexHandler(w http.ResponseWriter, r *http.Request) {
+	containers, err := runDockerPS()
+	if err != nil {
+		http.Error(w, "Cannot run `docker ps`. Ensure Docker is installed and you have permission.", http.StatusInternalServerError)
+		return
+	}
+	tmpl.Execute(w, map[string]interface{}{
+		"Containers": containers,
+	})
+}
+
+// POST /run – start a container from the supplied image.
+func runContainerHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	image := strings.TrimSpace(r.FormValue("image"))
+	if image == "" {
+		http.Error(w, "Image name required", http.StatusBadRequest)
+		return
+	}
+	if strings.ContainsAny(image, " \t\r\n\"'`$&|<>") {
+		http.Error(w, "Invalid image name", http.StatusBadRequest)
+		return
+	}
+	cmd := exec.Command("docker", "run", "-d", image)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	if err := cmd.Run(); err != nil {
+		msg := fmt.Sprintf("Failed to start container: %s – %s", err, out.String())
+		http.Error(w, msg, http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// POST /stop – stop a single container.
+func stopContainerHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	id := strings.TrimSpace(r.FormValue("id"))
+	if id == "" {
+		http.Error(w, "Container ID required", http.StatusBadRequest)
+		return
+	}
+	cmd := exec.Command("docker", "stop", id)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	if err := cmd.Run(); err != nil {
+		msg := fmt.Sprintf("Failed to stop container %s: %s – %s", id, err, out.String())
+		http.Error(w, msg, http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// POST /stopall – stop **all** running containers.
+func stopAllHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	cmdIDs := exec.Command("docker", "ps", "-q")
+	var idsOut bytes.Buffer
+	cmdIDs.Stdout = &idsOut
+	if err := cmdIDs.Run(); err != nil {
+		http.Error(w, "Failed to list containers", http.StatusInternalServerError)
+		return
+	}
+	ids := strings.Fields(idsOut.String())
+	if len(ids) == 0 {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+	var failed []string
+	for _, id := range ids {
+		stopCmd := exec.Command("docker", "stop", id)
+		var out bytes.Buffer
+		stopCmd.Stdout = &out
+		stopCmd.Stderr = &out
+		if err := stopCmd.Run(); err != nil {
+			failed = append(failed, fmt.Sprintf("%s (%s)", id, strings.TrimSpace(out.String())))
+		}
+	}
+	if len(failed) > 0 {
+		msg := fmt.Sprintf("Some containers could not be stopped: %s", strings.Join(failed, ", "))
+		http.Error(w, msg, http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// GET /tags?image=nginx – return a JSON array of tag strings.
+func tagsAPIHandler(w http.ResponseWriter, r *http.Request) {
+	image := strings.TrimSpace(r.URL.Query().Get("image"))
+	if image == "" {
+		http.Error(w, "image query param required", http.StatusBadRequest)
+		return
+	}
+	tags, err := fetchTags(image)
+	if err != nil {
+		http.Error(w, "Could not fetch tags from Docker Hub", http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(v)
+	json.NewEncoder(w).Encode(tags)
 }
 
-// Very small UUID‑like generator (no external lib)
-func genID() string {
-	b := make([]byte, 9)
-	_, _ = base64.URLEncoding.Encode(b, b) // ignore error – deterministic length
-	return base64.RawURLEncoding.EncodeToString(b)[:12]
-}
-
-// ---------- API Handlers ----------
-func createComponent(w http.ResponseWriter, r *http.Request) {
-	var c Component
-	if err := json.NewDecoder(r.Body).Decode(&c); err != nil {
-		http.Error(w, "bad json", http.StatusBadRequest)
+// GET /export – download a docker‑compose.yml for the current containers.
+func exportComposeHandler(w http.ResponseWriter, r *http.Request) {
+	yaml, err := buildComposeYAML()
+	if err != nil {
+		http.Error(w, "Failed to build compose file: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	c.ID = genID()
-	compStore.Lock()
-	compStore.m[c.ID] = c
-	compStore.Unlock()
-	jsonResponse(w, c)
+	w.Header().Set("Content-Type", "application/x-yaml")
+	w.Header().Set("Content-Disposition", `attachment; filename="docker-compose.yml"`)
+	io.WriteString(w, yaml)
 }
 
-func listComponents(w http.ResponseWriter, r *http.Request) {
-	compStore.RLock()
-	defer compStore.RUnlock()
-	list := make([]Component, 0, len(compStore.m))
-	for _, c := range compStore.m {
-		list = append(list, c)
+// ---------- HTML Template ----------
+var tmpl = template.Must(template.New("page").Parse(`
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>SONG – Docker Demo Server</title>
+<style>
+	body {font-family:Arial,sans-serif;background:#fafafa;margin:20px;}
+	h1 {color:#222;}
+	table {border-collapse:collapse;width:100%;max-width:1200px;}
+	th, td {padding:8px 12px;border:1px solid #ddd;text-align:left;}
+	th {background:#4a90e2;color:#fff;}
+	tr:nth-child(even){background:#f2f2f2;}
+	.plus-btn, .minus-btn, .export-btn {
+		font-size:24px;cursor:pointer;border:none;border-radius:50%;
+		width:48px;height:48px;display:flex;align-items:center;justify-content:center;
+		position:fixed;bottom:30px;box-shadow:0 2px 6px rgba(0,0,0,.2);
 	}
-	jsonResponse(w, list)
-}
+	.plus-btn {background:#28a745;color:#fff;right:30px;}
+	.minus-btn {background:#dc3545;color:#fff;right:90px;}
+	.export-btn {background:#0069d9;color:#fff;right:150px;}
+	.overlay {position:fixed;top:0;left:0;width:100%;height:100%;
+		background:rgba(0,0,0,.5);display:none;align-items:center;justify-content:center;}
+	.modal {background:#fff;padding:20px;border-radius:6px;box-shadow:0 2px 8px rgba(0,0,0,.3);
+		min-width:300px;}
+	.modal h2 {margin-top:0;}
+	.modal input[type=text] {width:100%;padding:6px;margin:6px 0;}
+	.modal button {margin-top:8px;padding:6px 12px;}
+	.tag-list {margin-top:8px;}
+	.tag-item {display:inline-block;background:#e9ecef;padding:4px 8px;margin:2px;
+		border-radius:4px;cursor:pointer;}
+</style>
+</head>
+<body>
+<h1>Running Docker Containers</h1>
 
-func createPage(w http.ResponseWriter, r *http.Request) {
-	var p Page
-	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
-		http.Error(w, "bad json", http.StatusBadRequest)
-		return
-	}
-	if p.Slug == "" {
-		http.Error(w, "slug required", http.StatusBadRequest)
-		return
-	}
-	pageStore.Lock()
-	pageStore.m[p.Slug] = p
-	pageStore.Unlock()
-	jsonResponse(w, p)
-}
+{{if .Containers}}
+<table>
+	<tr>
+		<th></th><!-- per‑row stop button -->
+		<th>ID</th><th>Image</th><th>Command</th><th>Created</th>
+		<th>Status</th><th>Ports</th><th>Name(s)</th>
+	</tr>
+	{{range .Containers}}
+	<tr>
+		<td>
+			<form method="POST" action="/stop" style="margin:0;">
+				<input type="hidden" name="id" value="{{.ID}}">
+				<button type="submit" title="Stop container {{.ID}}" style="background:none;border:none;color:#dc3545;font-weight:bold;cursor:pointer;">&#x2212;</button>
+			</form>
+		</td>
+		<td style="font-family:monospace;">{{.ID}}</td>
+		<td>{{.Image}}</td>
+		<td>{{.Command}}</td>
+		<td>{{.Created}}</td>
+		<td>{{.Status}}</td>
+		<td>{{.Ports}}</td>
+		<td>{{.Names}}</td>
+	</tr>
+	{{end}}
+</table>
+{{else}}
+<p>No containers are currently running.</p>
+{{end}}
 
-func updatePage(w http.ResponseWriter, r *http.Request) {
-	slug := strings.TrimPrefix(r.URL.Path, "/api/pages/")
-	pageStore.Lock()
-	defer pageStore.Unlock()
-	p, ok := pageStore.m[slug]
-	if !ok {
-		http.NotFound(w, r)
-		return
-	}
-	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
-		http.Error(w, "bad json", http.StatusBadRequest)
-		return
-	}
-	p.Slug = slug // enforce unchanged slug
-	pageStore.m[slug] = p
-	jsonResponse(w, p)
-}
+<!-- + button – add new container -->
+<button class="plus-btn" id="openModal">+</button>
 
-func getPage(w http.ResponseWriter, r *http.Request) {
-	slug := strings.TrimPrefix(r.URL.Path, "/pages/")
-	pageStore.RLock()
-	p, ok := pageStore.m[slug]
-	pageStore.RUnlock()
-	if !ok {
-		http.NotFound(w, r)
-		return
-	}
-	// Render a very simple HTML page that includes the stored components.
-	var sb strings.Builder
-	sb.WriteString("<!doctype html><html><head>")
-	sb.WriteString(fmt.Sprintf("<title>%s</title>", p.Title))
-	if p.Description != "" {
-		sb.WriteString(fmt.Sprintf(`<meta name="description" content="%s">`, p.Description))
-	}
-	sb.WriteString(`<style>nav{margin-bottom:1rem;} nav a{margin-right:.5rem;}</style>`)
-	sb.WriteString("</head><body>")
-	sb.WriteString(`<nav><a href="/">Home</a>`)
-	// list all known pages for quick navigation
-	pageStore.RLock()
-	for _, pg := range pageStore.m {
-		if pg.Slug != slug {
-			sb.WriteString(fmt.Sprintf(`<a href="/pages/%s">%s</a>`, pg.Slug, pg.Title))
-		}
-	}
-	pageStore.RUnlock()
-	sb.WriteString(`</nav>`)
+<!-- large red button – stop ALL containers -->
+<form method="POST" action="/stopall" style="display:inline;">
+	<button class="minus-btn" type="submit" title="Stop all running containers">&#x2212;</button>
+</form>
 
-	// Insert each component as a custom element.
-	for _, cid := range p.Components {
-		compStore.RLock()
-		c, exists := compStore.m[cid]
-		compStore.RUnlock()
-		if !exists {
-			continue // silently skip missing components
-		}
-		// The component is defined as a custom element with tag name "comp-{id}"
-		tag := fmt.Sprintf("comp-%s", cid[:8])
-		sb.WriteString(fmt.Sprintf("<%s></%s>", tag, tag))
-	}
-	sb.WriteString("</body></html>")
-	w.Header().Set("Content-Type", "text/html")
-	w.Write([]byte(sb.String()))
-}
+<!-- export compose button -->
+<a href="/export" class="export-btn" title="Export current setup as docker‑compose.yml">⤓</a>
 
-// Store arbitrary JS (display‑only)
-func storeJS(w http.ResponseWriter, r *http.Request) {
-	type payload struct {
-		Key  string `json:"key"`
-		Code string `json:"code"`
-	}
-	var p payload
-	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
-		http.Error(w, "bad json", http.StatusBadRequest)
-		return
-	}
-	if p.Key == "" {
-		http.Error(w, "key required", http.StatusBadRequest)
-		return
-	}
-	jsStore.Lock()
-	jsStore.m[p.Key] = p.Code
-	jsStore.Unlock()
-	jsonResponse(w, map[string]string{"status": "saved"})
-}
+<!-- Modal overlay – add container -->
+<div class="overlay" id="modalOverlay">
+	<div class="modal">
+		<h2>Run a new container</h2>
+		<label for="imageInput">Docker‑Hub image (e.g. <code>nginx</code> or <code>redis:alpine</code>)</label>
+		<input type="text" id="imageInput" placeholder="image name">
 
-// Retrieve stored JS (read‑only)
-func getJS(w http.ResponseWriter, r *http.Request) {
-	key := strings.TrimPrefix(r.URL.Path, "/api/js/")
-	jsStore.RLock()
-	code, ok := jsStore.m[key]
-	jsStore.RUnlock()
-	if !ok {
-		http.NotFound(w, r)
-		return
-	}
-	jsonResponse(w, map[string]string{"code": code})
-}
+		<button id="searchBtn">Search tags</button>
 
-// ---------- UI (static) ----------
-func uiHandler(w http.ResponseWriter, r *http.Request) {
-	// All UI files live under ./static/.  The path is stripped of the "/ui/" prefix.
-	upath := strings.TrimPrefix(r.URL.Path, "/ui/")
-	if upath == "" {
-		upath = "index.html"
-	}
-	fpath := path.Join("static", upath)
-	http.ServeFile(w, r, fpath)
-}
+		<div class="tag-list" id="tagList"></div>
 
-// ---------- Main ----------
+		<form method="POST" action="/run" id="runForm" style="margin-top:12px;">
+			<input type="hidden" name="image" id="selectedImage">
+			<button type="submit">Run</button>
+			<button type="button" id="closeBtn">Cancel</button>
+		</form>
+	</div>
+</div>
+
+<script>
+// Show/hide the “add container” modal
+document.getElementById('openModal').onclick = () => {
+	document.getElementById('modalOverlay').style.display = 'flex';
+};
+document.getElementById('closeBtn').onclick = () => {
+	document.getElementById('modalOverlay').style.display = 'none';
+};
+
+// Tag search – contacts /tags endpoint
+document.getElementById('searchBtn').onclick = async () => {
+	const img = document.getElementById('imageInput').value.trim();
+	if (!img) return alert('Enter an image name first');
+	const resp = await fetch('/tags?image=' + encodeURIComponent(img));
+	if (!resp.ok) return alert('Could not fetch tags');
+	const tags = await resp.json();
+	const list = document.getElementById('tagList');
+	list.innerHTML = '';
+	tags.forEach(t => {
+		const span = document.createElement('span');
+		span.textContent = t;
+		span.className = 'tag-item';
+		span.onclick = () => {
+			document.getElementById('selectedImage').value = img + ':' + t;
+			document.getElementById('runForm').requestSubmit();
+		};
+		list.appendChild(span);
+	});
+};
+</script>
+</body>
+</html>
+`))
+
+// ---------- main ----------
 func main() {
-	// ----- API (protected) -----
-	api := http.NewServeMux()
-	api.HandleFunc("/api/components", basicAuth(func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodPost:
-			createComponent(w, r)
-		case http.MethodGet:
-			listComponents(w, r)
-		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		}
-	}))
-	api.HandleFunc("/api/pages", basicAuth(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost {
-			createPage(w, r)
-			return
-		}
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}))
-	api.HandleFunc("/api/pages/", basicAuth(func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodPut:
-			updatePage(w, r)
-		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		}
-	}))
-	api.HandleFunc("/api/js", basicAuth(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost {
-			storeJS(w, r)
-			return
-		}
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}))
-	api.HandleFunc("/api/js/", basicAuth(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet {
-			getJS(w, r)
-			return
-		}
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}))
+	http.HandleFunc("/", indexHandler)
+	http.HandleFunc("/run", runContainerHandler)
+	http.HandleFunc("/stop", stopContainerHandler)
+	http.HandleFunc("/stopall", stopAllHandler)
+	http.HandleFunc("/tags", tagsAPIHandler)
+	http.HandleFunc("/export", exportComposeHandler)
 
-	// ----- Public routes -----
-	mux := http.NewServeMux()
-	mux.Handle("/", api)               // API under root
-	mux.HandleFunc("/ui/", uiHandler)  // UI assets
-	mux.HandleFunc("/pages/", getPage) // render assembled pages
-
-	// Serve static assets (CSS/JS) that are not UI‑protected
-	fileServer := http.FileServer(http.Dir("./static"))
-	mux.Handle("/assets/", http.StripPrefix("/assets/", fileServer))
-
-	addr := ":8080"
-	log.Printf("🚀 SONG server listening on %s – basic auth user=%s, pass=%s", addr, authUser, authPass)
-	if err := http.ListenAndServe(addr, mux); err != nil {
-		log.Fatalf("server failed: %v", err)
+	fmt.Println("Server listening on http://localhost:8042")
+	if err := http.ListenAndServe(":8042", nil); err != nil {
+		panic(err)
 	}
 }

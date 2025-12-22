@@ -1,0 +1,11 @@
+# ------------------------------------------------------------
+# Stage 1 – Builder
+# ------------------------------------------------------------
+FROM golang:1.23-alpine AS builder
+
+# Install git (required for go modules)
+RUN apk add --no-cache git
+
+# Create a non‑root user (good practice)
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+WORKDIR /

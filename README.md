@@ -1,151 +1,130 @@
-SONG – Server‑Side Web‑Component Builder
-
-Version: 1.0 (July 23 2025)
-Author: Azzurro Technology
-Table of Contents
-
-    Project Overview
-    Features
-    Prerequisites
-    Installation & Build
-    Running the Server
-    Authentication
-    API Endpoints
-    Static UI Pages
-    Data Flow & Component Lifecycle
-    Extending / Persisting Data
-    Security Considerations
-    License
-
-Project Overview
-
-SONG (Server Of New Graphics) is a lightweight Go server that lets authenticated users:
-
-    Define custom web components using standard HTML tags and optional JavaScript.
-    Assemble pages from those components.
-    Navigate the resulting pages like a normal website.
-    Store arbitrary JavaScript snippets without executing them on the server.
-
-All functionality is built exclusively with the Go standard library and vanilla client‑side JavaScript—no external dependencies, no GitHub imports.
+SONG – Docker Demo ServerSONG (Simple Operations for Native Containers) is a tiny, zero‑dependency Go web application that lets you view, start, stop, and export Docker containers from a browser‑based UI.It is built, packaged, and maintained by Azzurro Technology Inc.Table of Contents
 Features
-#	Capability	Implementation Details
-1	Component creation	POST /api/components – stores HTML + optional JS, returns generated ID.
-2	Page assembly	POST /api/pages – defines a slug, title, description, and ordered component IDs.
-3	Normal navigation	Pages rendered at /pages/{slug} with a simple navigation bar.
-4	JavaScript storage (blocked execution)	POST /api/js saves raw source; UI displays it in a read‑only <pre>/<textarea>.
-5	Component & page editing	UI forms load existing data (by ID or slug) and re‑POST to update.
-6	Basic authentication	All /api/* routes wrapped in a middleware that checks HTTP Basic Auth.
-7	Zero external libraries	Pure Go standard library (net/http, encoding/json, sync, etc.) and plain HTML/JS.
+Architecture Overview
 Prerequisites
+Getting Started
 
-    Go ≥ 1.22 (any recent version supporting modules).
-    A modern browser (Chrome, Firefox, Edge, Safari) for the UI.
+Run locally (binary)
+Run inside Docker (recommended)
 
-No other software is required.
-Installation & Build
 
-# Clone (or copy) the repository structure locally
-git clone https://github.com/AzzurroTech/SONG.git   # optional – you can also just copy the files
-cd SONG
-
-# Initialise a Go module (if not already done)
-go mod init song
-
-# Build the binary (optional – you can also run directly)
-go build -o song-server main.go
-
-All source files are:
-
-song/
-├─ main.go                # Go server implementation
-└─ static/
-   ├─ index.html          # Login screen
-   ├─ dashboard.html      # Main control panel
-   ├─ component.html      # Component editor
-   ├─ page.html           # Page builder
-   └─ editjs.html         # JavaScript snippet viewer
-
-Running the Server
-
-# Run the compiled binary or use `go run`
-./song-server            # or: go run main.go
-
-The server listens on http://localhost:8080.
-
-Open that URL in a browser. The first page (/) is the login screen.
-Default credentials (replace before production):
-
-Username: admin
-Password: changeme
-
-After successful login you are redirected to /ui/dashboard.html.
-Authentication
-
-All API routes (/api/*) require HTTP Basic Authentication.
-The middleware validates against the constants defined in main.go:
-
-const (
-    authUser = "admin"
-    authPass = "changeme"
-)
-
-Replace these values with environment‑derived secrets or a proper password store for real deployments.
-
-The UI stores the Base64‑encoded username:password string in sessionStorage and adds it to every request’s Authorization header.
-API Endpoints
-Method	Path	Description	Request Body (JSON)	Response
-GET	/api/components	List all stored components	—	[{id, html, js}]
-POST	/api/components	Create a new component	{ "html": "...", "js": "..." }	{ "id": "...", "html": "...", "js": "..." }
-GET	/api/pages/{slug}	Retrieve a page definition (internal use)	—	{ "slug": "...", "title": "...", "components": [...], "description": "..." }
-POST	/api/pages	Create a new page	{ "slug":"home", "title":"Home", "components":["id1","id2"], "description":"…" }	Same payload echoed
-PUT	/api/pages/{slug}	Update an existing page	Same as POST payload (slug taken from URL)	Updated page JSON
-POST	/api/js	Store a JavaScript snippet (read‑only)	{ "key":"myUtil", "code":"function foo(){...}" }	{ "status":"saved" }
-GET	/api/js/{key}	Retrieve a stored snippet	—	{ "code":"function foo(){...}" }
-
-All API responses have Content-Type: application/json.
-Static UI Pages
-URL	Purpose
-/ui/index.html	Login screen (basic auth).
-/ui/dashboard.html	Central hub linking to component, page, and JS editors.
-/ui/component.html	Form to create or edit a component (HTML + optional JS).
-/ui/page.html	Form to create or edit a page (slug, title, component ordering).
-/ui/editjs.html	Viewer for stored JavaScript snippets (read‑only).
-/pages/{slug}	Rendered page that includes the custom elements defined by the selected components.
-
-All UI files are pure HTML/CSS/vanilla JavaScript and reference no external CDNs.
-Data Flow & Component Lifecycle
-
-    Create Component – UI sends POST /api/components. Server generates a short ID, stores the HTML/JS pair, and returns the ID.
-    Register Custom Element – The client‑side code (inside component.html) registers a custom element named comp-<first‑8‑chars-of-id> that injects the stored HTML and optionally runs the supplied JS in its class.
-    Create Page – UI posts to /api/pages with a slug and an ordered list of component IDs.
-    Render Page – When a visitor navigates to /pages/<slug>, the server builds a simple HTML document: a navigation bar + a sequence of <comp-xxxxxxx> tags. Browser loads the component definitions (already cached from previous interactions) and displays the composed page.
-    JavaScript Snippets – Stored via /api/js; the UI only displays them, never executes them, satisfying the “block code execution” requirement.
-
-All data lives in in‑memory maps (compStore, pageStore, jsStore). Restarting the server clears the data.
-Extending / Persisting Data
-
-To move beyond volatile storage, replace the map‑based stores with a lightweight database (e.g., SQLite) using only the Go standard library’s database/sql package and the built‑in sqlite3 driver (available in the standard distribution). Example steps:
-
-import (
-    "database/sql"
-    _ "modernc.org/sqlite" // pure Go driver, no CGO
-)
-
-db, _ := sql.Open("sqlite", "./song.db")
-// Create tables for components, pages, js_snippets
-// Implement CRUD functions that operate on db instead of the maps
-
-For production‑grade authentication, read credentials from environment variables and hash passwords with golang.org/x/crypto/bcrypt (still a standard‑library‑compatible approach).
-Security Considerations
-
-    Basic Auth – Transmit over HTTPS in any non‑local deployment.
-    Password Management – Do not ship the default credentials; replace them with strong, secret values.
-    Input Validation – The prototype trusts incoming HTML/JS; in a real product you’d sanitize or sandbox user‑provided markup to prevent XSS or injection attacks.
-    Rate Limiting – Not implemented; consider adding a simple token bucket if exposing publicly.
-    CSRF – Since the UI stores credentials in sessionStorage and sends them via Authorization header, standard CSRF vectors are mitigated, but you may still want to implement same‑site cookies or anti‑CSRF tokens for added safety.
-
+Using the UI
+Exported docker‑compose.yml
+Building the Image Yourself
+Support & Services
 License
 
-The code in this repository is released under the MIT License. Feel free to modify, redistribute, or incorporate it into your own projects, provided the license terms are retained.
 
-Enjoy building with SONG! If you encounter issues or have feature ideas, open an issue on the repository or contact Azzurro Technology support.
+Features
+FeatureDescriptionLive container listShows ID, image, command, creation time, status, ports, and container name.Stop a single containerRed “‑” button on each row (docker stop <id>).Stop all containersLarge floating red button (bottom‑right) stops every running container.Launch a new containerGreen “+” button opens a modal. Type any Docker‑Hub image, optionally browse the latest tags, and launch it (docker run -d <image>).Export as ComposeOne‑click download of a minimal docker-compose.yml that recreates the currently running containers (image, ports, environment).Zero external dependenciesPure Go standard library, compiled into a single static binary.Small runtime imageMulti‑stage Dockerfile produces a ~15 MB distroless container.
+
+Architecture Overview
++-------------------+          +---------------------------+
+|   Browser UI      |  HTTP    |   Go HTTP server (SONG)   |
+|  (HTML/CSS/JS)   | <------> |  - docker ps               |
+|                   |          |  - docker run              |
+|  • Table of containers         |  - docker stop             |
+|  • Buttons (stop, add, export)|  - docker inspect           |
++-------------------+          +---------------------------+
+
+
+All Docker interactions are performed via the Docker CLI (docker binary) invoked from Go (os/exec).
+The server never stores credentials; it relies on the host’s Docker socket permissions.
+
+
+Prerequisites
+ItemMinimum version / requirementDocker Engine20.10 or newer (host must expose the Docker socket to the container if you run SONG inside Docker).Go (only for building locally)1.22 or newer.User permissionsMust belong to the docker group or run the binary with sufficient privileges to talk to the Docker daemon.NetworkOutbound HTTPS access to hub.docker.com for tag lookup (optional, only used in the “Add container” modal).
+
+Getting Started
+Run locally (binary)
+# 1️⃣ Clone the repo (or copy the source files)
+git clone https://github.com/azzurrotech/song-demo.git
+cd song-demo
+
+# 2️⃣ Build the binary
+go build -o song .
+
+# 3️⃣ Run (ensure your user can talk to Docker)
+./song
+You should see:
+Server listening on http://localhost:8080
+
+Open a browser at that address to interact with the UI.
+Run inside Docker (recommended)
+
+Why Docker?
+Consistent environment – the same binary runs everywhere.
+Small footprint – the final image is based on distroless/static, ~15 MB.
+
+# Build the image (Dockerfile is included)
+docker build -t song-demo:latest .
+
+# Run the container, mounting the host Docker socket.
+docker run -d \
+  --name song-demo \
+  -p 8080:8080 \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  song-demo:latest
+
+Security note – mounting the Docker socket grants the container full control over the host Docker daemon. Use only on trusted hosts or in isolated environments.
+
+Now visit http://localhost:8080 on the host.
+
+Using the UI
+UI ElementActionContainer tableLists all running containers.Red “‑” button (per row)Stops that specific container (docker stop <ID>).Large red floating “‑” button (bottom‑right)Stops all containers (docker stop $(docker ps -q)).Green “+” button (bottom‑right)Opens a modal to launch a new container.Image fieldType any Docker‑Hub image name (e.g., nginx).Search tags buttonCalls Docker Hub API for up to 10 recent tags; click a tag to launch docker run -d <image>:<tag>.Export (⤓) button (bottom‑right)Downloads a docker-compose.yml that recreates the displayed containers.Page refreshReload the browser to see the latest state (the server queries Docker on every request).
+
+Exported docker-compose.yml
+The exported file follows Compose v3 syntax and includes:
+
+service name – deterministic (svc_<short‑container‑id>).
+image – exact image reference from docker inspect.
+ports – any host‑to‑container port mappings discovered via NetworkSettings.Ports.
+environment – all environment variables defined for the container (Config.Env).
+
+Only these three fields are emitted because they are universally supported and can be recreated safely.
+
+Limitations – Volumes, custom networks, restart policies, and other advanced Docker options are not captured. You may manually edit the generated file to add them if needed.
+
+
+Building the Image Yourself
+The repository ships a multi‑stage Dockerfile:
+# ------------------------------------------------------------
+# Stage 1 – Builder
+# ------------------------------------------------------------
+FROM golang:1.23-alpine AS builder
+RUN apk add --no-cache git
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
+COPY *.go ./
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -trimpath -ldflags="-s -w" -o song .
+
+# ------------------------------------------------------------
+# Stage 2 – Runtime (distroless)
+# ------------------------------------------------------------
+FROM gcr.io/distroless/static:nonroot
+COPY --from=builder /app/song /app/song
+USER nonroot:nonroot
+EXPOSE 8080
+ENTRYPOINT ["/app/song"]
+Stage 1 compiles a static binary named song.
+Stage 2 copies that binary into a distroless image that runs as a non‑root user.
+To rebuild:
+docker build -t song-demo:custom .
+
+Support & Services
+Azzurro Technology Inc. offers professional services around SONG and any open‑source stack built with it:
+ServiceWhat you getCustom Feature DevelopmentImplementation of additional Docker operations (volume management, network orchestration, authentication, etc.).Enterprise‑grade HardeningSecurity review, RBAC integration, TLS termination, and sandboxed execution.CI/CD IntegrationPipelines that automatically build, test, and deploy SONG alongside your applications.Training & WorkshopsHands‑on sessions for DevOps teams on Docker automation, Compose generation, and container lifecycle management.Support ContractsSLA‑backed bug fixes, priority issue handling, and regular updates.ConsultingArchitecture reviews for container‑centric workloads, migration strategies, and cost optimisation.
+Contact us
+
+Website: https://azzurro.tech
+Support email: info@azzurro.tech
+
+Reach out to discuss your requirements, obtain a quote, or schedule a discovery call.
+
+License
+SONG is released under the MIT License. Feel free to use, modify, and redistribute it in commercial or open‑source projects. See the LICENSE file for full terms.
+
+Enjoy a simple, fast way to manage Docker containers from the comfort of your browser—powered by SONG and backed by Azzurro Technology Inc.!
