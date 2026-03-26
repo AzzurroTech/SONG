@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>{{.Title}}</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <style>
+        .builder-container { display: flex; gap: 20px; height: 80vh; }
+        .sidebar { width: 250px; background: #f0f0f0; padding: 15px; border-radius: 8px; }
+        .preview-area { flex: 1; background: white; padding: 20px; border: 1px solid #ddd; overflow-y: auto; }
+        .field-item { background: #fff; padding: 10px; margin-bottom: 10px; border: 1px solid #ccc; cursor: move; }
+        .btn-add { width: 100%; padding: 10px; margin-bottom: 10px; background: #27ae60; color: white; border: none; cursor: pointer; }
+        .btn-save { width: 100%; padding: 10px; background: #2980b9; color: white; border: none; cursor: pointer; margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>SONG FormBuilder</h1>
+        <p>Create custom forms for your VIDI database</p>
+    </header>
+
+    <div class="builder-container">
+        <!-- Sidebar: Field Palette -->
+        <div class="sidebar">
+            <h3>Fields</h3>
+            <button class="btn-add" onclick="addField('text')">Text Input</button>
+            <button class="btn-add" onclick="addField('email')">Email Input</button>
+            <button class="btn-add" onclick="addField('textarea')">Textarea</button>
+            <button class="btn-add" onclick="addField('select')">Dropdown</button>
+            
+            <hr>
+            <label>Form Slug (URL):</label>
+            <input type="text" id="formSlug" placeholder="e.g., contact-us" style="width: 90%;">
+            <label>Form Title:</label>
+            <input type="text" id="formTitle" placeholder="e.g., Contact Us" style="width: 90%;">
+            
+            <button class="btn-save" onclick="saveForm()">Save Form</button>
+        </div>
+
+        <!-- Preview Area -->
+        <div class="preview-area" id="previewArea">
+            <h2 id="previewTitle">Form Title</h2>
+            <form id="previewForm">
+                <!-- Fields injected here -->
+            </form>
+        </div>
+    </div>
+
+    <script>
+        let formFields = [];
+
+        function addField(type) {
+            const id = Date.now();
+            const label = prompt("Enter Label for this field:");
+            if (!label) return;
+
+            const field = { id, type, label, name: label.toLowerCase().replace(/\s+/g, '_') };
+            formFields.push(field);
+            renderPreview();
+        }
+
+        function renderPreview() {
+            const container = document.getElementById('previewForm');
+            const titleInput = document.getElementById('formTitle').value;
+            document.getElementById('previewTitle').innerText = titleInput || "Untitled Form";
+
+            container.innerHTML = '';
+            formFields.forEach((f, index) => {
+                let inputHtml = '';
+                if (f.type === 'textarea') {
+                    inputHtml = `<textarea name="$${f.name}" placeholder="$${f.label}"></textarea>`;
+                } else if (f.type === 'select') {
+                    inputHtml = `<select name="${f.name}"><option>Option 1</option><option>Option 2</option></select>`;
+                } else {
+                    inputHtml = `<input type="$${f.type}" name="$${f.name}">`;
+                }
+
+                const div = document.createElement('div');
+                div.className = 'field-item';
+                div.innerHTML = `<strong>$${f.label}</strong> ($${f.type}) <button onclick="removeField(${index})" style="float:right; color:red;">x</button>`;
+                div.appendChild(document.createElement('br'));
+                div.appendChild(document.createElement('br'));
+                div.appendChild(document.createElement('span')).innerHTML = inputHtml;
+                
+                container.appendChild(div);
+            });
+        }
+
+        function removeField(index) {
+            formFields.splice(index, 1);
+            renderPreview();
+        }
+
+        function saveForm() {
+            const slug = document.getElementById('formSlug').value;
+            const title = document.getElementById('formTitle').value;
+            
+            if (!slug || !title) {
+                alert("Please enter a Slug and Title");
+                return;
+            }
+
+            const payload = {
+                slug: slug,
+                title: title,
+                fields: formFields
+            };
+
+            fetch('/api/forms', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload)
+            })
+            .then(res => res.json())
+            .then(data => {
+                alert('Form Saved! Access it at: /forms/' + data.slug);
+            })
+            .catch(err => alert('Error saving form'));
+        }
+
+        // Listen for title changes
+        document.getElementById('formTitle').addEventListener('input', renderPreview);
+    </script>
+</body>
+</html>
