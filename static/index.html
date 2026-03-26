@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.Title}}</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <header>
+        <h1>SONG</h1>
+        <p>Powered by {{.Author}}</p>
+    </header>
+    
+    <main>
+        <section id="veni-section">
+            <h2>VENI: Virtual Endpoints</h2>
+            <a href="/venie/demo">Load Demo Component</a>
+        </section>
+
+        <section id="vidi-section">
+            <h2>VIDI: Data Management</h2>
+            <form id="dataForm" action="/api/submit" method="POST">
+                <input type="hidden" name="form_name" value="contact_form">
+                <label for="data">Enter Data:</label>
+                <textarea id="data" name="data" rows="4" cols="50"></textarea>
+                <button type="submit">Submit to Database</button>
+            </form>
+            <div id="response"></div>
+        </section>
+    </main>
+
+    <footer>
+        <p>&copy; 2026 Azzurro Technology Inc. | <a href="https://azzurro.tech">Visit Website</a></p>
+    </footer>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
