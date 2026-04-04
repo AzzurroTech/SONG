@@ -1,0 +1,174 @@
+version: '3.8'
+
+services:
+  # ---------------------------------------------------------------------------
+  # SONG Server
+  # ---------------------------------------------------------------------------
+  song:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: runtime
+      args:
+        VERSION: ${SONG_VERSION:-dev}
+        BUILD_DATE: $${BUILD_DATE:-$$(date -u +"%Y-%m-%dT%H:%M:%SZ")}
+    container_name: song-server
+    restart: unless-stopped
+    ports:
+      - "${SONG_PORT:-8080}:8080"
+    environment:
+      # Server Config
+      - SONG_ENV=${SONG_ENV:-production}
+      - SONG_HOST=0.0.0.0
+      - SONG_PORT=8080
+      
+      # Core Storage
+      - CORE_DIR=/app/core
+      - CORE_BACKUP_ENABLED=${CORE_BACKUP_ENABLED:-true}
+      - CORE_BACKUP_INTERVAL=24h
+      
+      # Paths
+      - STATIC_DIR=/app/static
+      - TEMPLATE_DIR=/app/templates
+      - FUNCTIONS_DIR=/app/functions
+      - DATA_DIR=/app/data
+      
+      # Auth
+      - JWT_SECRET=${JWT_SECRET:-change_me_to_a_secure_random_string_32_chars_long}
+      - OIDC_ENABLED=${OIDC_ENABLED:-false}
+      
+      # Database Configuration
+      - DB_ENABLED=${DB_ENABLED:-false}
+      
+      # Default DB (only used if DB_ENABLED=true)
+      - DB_DEFAULT_TYPE=${DB_DEFAULT_TYPE:-postgresql}
+      - DB_DEFAULT_HOST=${DB_DEFAULT_HOST:-postgres}
+      - DB_DEFAULT_PORT=${DB_DEFAULT_PORT:-5432}
+      - DB_DEFAULT_USER=${DB_DEFAULT_USER:-song_user}
+      - DB_DEFAULT_PASSWORD=${DB_DEFAULT_PASSWORD:-secure_password}
+      - DB_DEFAULT_NAME=${DB_DEFAULT_NAME:-song_db}
+      - DB_DEFAULT_SSL_MODE=${DB_DEFAULT_SSL_MODE:-disable}
+      
+      # Additional DBs (Example: Analytics)
+      - DB_ADDITIONAL_NAMES=${DB_ADDITIONAL_NAMES:-}
+      # Uncomment and configure if using additional DBs
+      # - DB_ANALYTICS_TYPE=postgresql
+      # - DB_ANALYTICS_HOST=analytics-db
+      # - DB_ANALYTICS_PORT=5432
+      # - DB_ANALYTICS_USER=analytics_user
+      # - DB_ANALYTICS_PASSWORD=analytics_pass
+      # - DB_ANALYTICS_NAME=analytics_db
+
+    volumes:
+      # Persist core JSON data
+      - song_core:/app/core
+      # Persist static assets (optional)
+      - ./static:/app/static:ro
+      # Persist templates (optional)
+      - ./templates:/app/templates:ro
+      # Persist function source code (optional)
+      - ./functions:/app/functions:ro
+      # Persist data files (optional)
+      - ./data:/app/data:ro
+      # Mount local .env for overrides (optional, not recommended for prod secrets)
+      # - ./.env:/app/.env:ro
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+    networks:
+      - song-network
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL (Optional - Enabled via profile)
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:15-alpine
+    container_name: song-postgres
+    restart: unless-stopped
+    profiles:
+      - database
+    environment:
+      - POSTGRES_USER=${DB_DEFAULT_USER:-song_user}
+      - POSTGRES_PASSWORD=${DB_DEFAULT_PASSWORD:-secure_password}
+      - POSTGRES_DB=${DB_DEFAULT_NAME:-song_db}
+      - POSTGRES_INITDB_ARGS=-E UTF8
+    volumes:
+      - song_postgres_data:/var/lib/postgresql/data
+      - ./docker/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - song-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_DEFAULT_USER:-song_user} -d ${DB_DEFAULT_NAME:-song_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # Redis (Optional - Enabled via profile)
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: song-redis
+    restart: unless-stopped
+    profiles:
+      - cache
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-redis_secret}
+    volumes:
+      - song_redis_data:/data
+    networks:
+      - song-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # Adminer (Optional - Database GUI)
+  # ---------------------------------------------------------------------------
+  adminer:
+    image: adminer:latest
+    container_name: song-adminer
+    restart: unless-stopped
+    profiles:
+      - tools
+    ports:
+      - "8081:8080"
+    depends_on:
+      - postgres
+    networks:
+      - song-network
+
+networks:
+  song-network:
+    driver: bridge
+
+volumes:
+  song_core:
+    driver: local
+  song_postgres_data:
+    driver: local
+  song_redis_data:
+    driver: local
